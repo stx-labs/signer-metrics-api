@@ -33,10 +33,11 @@ async function initBackgroundServices(db: PgStore) {
     },
   });
 
-  const blockHeight = await db.getChainTipBlockHeight();
-  const lastRedisMsgId = await db.getLastIngestedRedisMsgId();
-  logger.info(`signer-metrics-api is at block ${blockHeight}, msg_id: ${lastRedisMsgId}`);
-  const eventStreamListener = new EventStreamHandler({ db, lastMessageId: lastRedisMsgId });
+  const chainTip = await db.getChainTip(db.sql);
+  logger.info(
+    `signer-metrics-api is at block ${chainTip.block_height}, index_block_hash: ${chainTip.index_block_hash}`
+  );
+  const eventStreamListener = new EventStreamHandler({ db });
   registerShutdownConfig({
     name: 'Redis Event Stream',
     forceKillable: false,

@@ -39,6 +39,7 @@ export const ApiStatusResponse = Type.Object(
     status: Type.String({ examples: ['ready'] }),
     chain_tip: Type.Object({
       block_height: Type.Integer({ examples: [163541] }),
+      index_block_hash: Type.String({ examples: ['0x1234567890abcdef'] }),
     }),
   },
   { title: 'Api Status Response' }

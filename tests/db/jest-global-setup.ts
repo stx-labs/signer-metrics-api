@@ -145,6 +145,7 @@ async function waitForRedis(): Promise<void> {
       await timeout(100);
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   await redisClient.disconnect();
 }
 
@@ -228,7 +229,7 @@ export default async function setup(): Promise<void> {
     console.log(`Using REDIS_STREAM_KEY_PREFIX: ${process.env.REDIS_STREAM_KEY_PREFIX}`);
     const snpContainer = await startContainer({
       docker,
-      image: 'hirosystems/salt-n-pepper:1.1.2',
+      image: 'ghcr.io/stx-labs/stacks-node-publisher:latest',
       ports: [{ container: snpObserverPort, host: snpHostPort }],
       env: [
         `OBSERVER_HOST=0.0.0.0`,
