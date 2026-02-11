@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { PgStore } from '../../src/pg/pg-store';
 import * as fs from 'node:fs';
 import * as readline from 'node:readline/promises';
@@ -23,8 +22,8 @@ describe('End-to-end ingestion tests', () => {
   });
 
   test('db chaintip starts at 1', async () => {
-    const chainTip = await db.getChainTipBlockHeight();
-    expect(chainTip).toBe(1);
+    const chainTip = await db.getChainTip(db.sql);
+    expect(chainTip.block_height).toBe(1);
   });
 
   test('populate SNP server data', async () => {
@@ -54,9 +53,7 @@ describe('End-to-end ingestion tests', () => {
   });
 
   test('ingest msgs from SNP server', async () => {
-    const lastRedisMsgId = await db.getLastIngestedRedisMsgId();
-    expect(lastRedisMsgId).toBe('0');
-    const eventStreamListener = new EventStreamHandler({ db, lastMessageId: lastRedisMsgId });
+    const eventStreamListener = new EventStreamHandler({ db });
     await eventStreamListener.start();
     // wait for last msgID to be processed
     const [{ msgId: lastMsgProcessed }] = await onceWhen(
@@ -70,14 +67,9 @@ describe('End-to-end ingestion tests', () => {
     await eventStreamListener.stop();
   });
 
-  test('validate all events ingested', async () => {
-    const finalPostgresMsgId = await db.getLastIngestedRedisMsgId();
-    expect(finalPostgresMsgId).toBe(sampleEventsLastMsgId);
-  });
-
   test('validate blocks ingested', async () => {
-    const chainTip = await db.getChainTipBlockHeight();
-    expect(chainTip).toBe(sampleEventsBlockHeight);
+    const chainTip = await db.getChainTip(db.sql);
+    expect(chainTip.block_height).toBe(sampleEventsBlockHeight);
   });
 
   test('validate cycle signer data', async () => {

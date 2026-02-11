@@ -38,12 +38,15 @@ export class PgWriteStore extends BasePgStoreModule {
     super(db);
   }
 
-  async updateChainTipBlockHeight(sql: PgSqlClient, blockHeight: number): Promise<void> {
-    await sql`UPDATE chain_tip SET block_height = ${blockHeight}`;
-  }
-
-  async updateLastIngestedRedisMsgId(sql: PgSqlClient, msgId: string): Promise<void> {
-    await sql`UPDATE chain_tip SET last_redis_msg_id = ${msgId}`;
+  async updateChainTip(
+    sql: PgSqlClient,
+    chainTip: { blockHeight: number; indexBlockHash: string }
+  ): Promise<void> {
+    await sql`
+      UPDATE chain_tip SET
+        block_height = ${chainTip.blockHeight},
+        index_block_hash = ${chainTip.indexBlockHash}
+    `;
   }
 
   async applyStackerDbChunk(

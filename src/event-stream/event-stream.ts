@@ -18,7 +18,7 @@ export class EventStreamHandler {
     processedMessage: [{ msgId: string }];
   }>();
 
-  constructor(opts: { db: PgStore; lastMessageId: string }) {
+  constructor(opts: { db: PgStore }) {
     this.db = opts.db;
     const appName = `signer-metrics-api ${SERVER_VERSION.tag} (${SERVER_VERSION.branch}:${SERVER_VERSION.commit})`;
     this.eventStream = new StacksMessageStream({
@@ -37,7 +37,6 @@ export class EventStreamHandler {
     this.eventStream.start(
       async () => {
         const chainTip = await this.db.getChainTip(this.db.sql);
-        if (!chainTip) return null;
         return {
           blockHeight: chainTip.block_height,
           indexBlockHash: chainTip.index_block_hash,
@@ -63,7 +62,7 @@ export class EventStreamHandler {
         }
         if ('signer_signature_hash' in blockMsg) {
           const parsed = await this.threadedParser.parseNakamotoBlock(blockMsg);
-          await this.handleNakamotoBlockMsg(messageId, parseInt(timestamp), parsed);
+          await this.handleNakamotoBlockMsg(parsed);
         } else {
           // ignore pre-Nakamoto blocks
         }
@@ -72,7 +71,7 @@ export class EventStreamHandler {
 
       case MessagePath.StackerDbChunks: {
         const parsed = await this.threadedParser.parseStackerDbChunk(message.payload);
-        await this.handleStackerDbMsg(messageId, parseInt(timestamp), parsed);
+        await this.handleStackerDbMsg(parseInt(timestamp), parsed);
         break;
       }
 
@@ -89,7 +88,6 @@ export class EventStreamHandler {
   }
 
   async handleStackerDbMsg(
-    messageId: string,
     timestamp: number,
     stackerDbChunks: ParsedStackerDbChunk[]
   ): Promise<void> {
@@ -100,7 +98,6 @@ export class EventStreamHandler {
         const result = await this.db.ingestion.applyStackerDbChunk(sql, timestamp, chunk);
         appliedSignerMessageResults.push(...result);
       }
-      await this.db.ingestion.updateLastIngestedRedisMsgId(sql, messageId);
     });
     this.logger.info(`Apply StackerDB chunks finished in ${time.getElapsedSeconds()}s`);
 
@@ -113,23 +110,20 @@ export class EventStreamHandler {
     }
   }
 
-  async handleNakamotoBlockMsg(
-    messageId: string,
-    _timestamp: number,
-    block: ParsedNakamotoBlock
-  ): Promise<void> {
-    // TODO: wrap in sql transaction
+  async handleNakamotoBlockMsg(block: ParsedNakamotoBlock): Promise<void> {
     const time = stopwatch();
     await this.db.sqlWriteTransaction(async sql => {
-      const lastIngestedBlockHeight = await this.db.getChainTip(sql);
-      if (block.blockHeight <= (lastIngestedBlockHeight?.block_height ?? 1)) {
+      const { block_height: lastIngestedBlockHeight } = await this.db.getChainTip(sql);
+      if (block.blockHeight <= lastIngestedBlockHeight) {
         this.logger.info(`Skipping previously ingested block ${block.blockHeight}`);
         return;
       }
       this.logger.info(`Apply block ${block.blockHeight}`);
       await this.db.ingestion.applyBlock(sql, block);
-      await this.db.ingestion.updateChainTipBlockHeight(sql, block.blockHeight);
-      await this.db.ingestion.updateLastIngestedRedisMsgId(sql, messageId);
+      await this.db.ingestion.updateChainTip(sql, {
+        blockHeight: block.blockHeight,
+        indexBlockHash: block.indexBlockHash,
+      });
     });
     this.logger.info(`Apply block ${block.blockHeight} finished in ${time.getElapsedSeconds()}s`);
   }

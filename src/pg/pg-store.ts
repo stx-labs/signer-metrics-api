@@ -11,7 +11,7 @@ import * as path from 'path';
 import { PgWriteStore } from './ingestion/pg-write-store';
 import { BlockIdParam, normalizeHexString, sleep } from '../helpers';
 import { Fragment } from 'postgres';
-import { DbBlockProposalQueryResponse } from './types';
+import { DbBlockProposalQueryResponse, DbChainTip } from './types';
 import { NotificationPgStore } from './notifications/pg-notifications';
 
 export const MIGRATIONS_DIR = path.join(__dirname, '../../migrations');
@@ -77,27 +77,11 @@ export class PgStore extends BasePgStore {
     }
   }
 
-  async getChainTip(
-    sql: PgSqlClient
-  ): Promise<{ block_height: number; index_block_hash: string } | null> {
-    const result = await sql<{ block_height: number; index_block_hash: string }[]>`
-      SELECT block_height, index_block_hash
-      FROM blocks
-      WHERE block_height = (SELECT block_height FROM chain_tip)
+  async getChainTip(sql: PgSqlClient): Promise<DbChainTip> {
+    const result = await sql<DbChainTip[]>`
+      SELECT block_height, index_block_hash FROM chain_tip
     `;
-    return result[0] ?? null;
-  }
-
-  public async getLastIngestedRedisMsgId(): Promise<string> {
-    const result = await this.sql<
-      { last_redis_msg_id: string }[]
-    >`SELECT last_redis_msg_id FROM chain_tip`;
-    return result[0].last_redis_msg_id;
-  }
-
-  async getChainTipBlockHeight(): Promise<number> {
-    const result = await this.sql<{ block_height: number }[]>`SELECT block_height FROM chain_tip`;
-    return result[0].block_height;
+    return result[0];
   }
 
   async getPoxInfo() {
