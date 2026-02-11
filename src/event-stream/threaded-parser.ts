@@ -1,7 +1,6 @@
 import * as WorkerThreads from 'node:worker_threads';
 import * as path from 'node:path';
 import { waiter, Waiter, logger as defaultLogger } from '@hirosystems/api-toolkit';
-import { CoreNodeNakamotoBlockMessage, StackerDbChunk } from './core-node-message';
 import { ParsedNakamotoBlock, ParsedStackerDbChunk } from './msg-parsing';
 import {
   NakamotoBlockMsgReply,
@@ -12,6 +11,7 @@ import {
   ThreadedParserMsgType,
   workerFile,
 } from './threaded-parser-worker';
+import { NewBlockMessage, StackerDbChunksMessage } from '@stacks/node-publisher-client';
 
 export class ThreadedParser {
   private readonly worker: WorkerThreads.Worker;
@@ -50,7 +50,7 @@ export class ThreadedParser {
     });
   }
 
-  async parseNakamotoBlock(block: CoreNodeNakamotoBlockMessage): Promise<ParsedNakamotoBlock> {
+  async parseNakamotoBlock(block: NewBlockMessage): Promise<ParsedNakamotoBlock> {
     const replyWaiter = waiter<NakamotoBlockMsgReply>();
     const msg: NakamotoBlockMsgRequest = {
       type: ThreadedParserMsgType.NakamotoBlock,
@@ -63,7 +63,7 @@ export class ThreadedParser {
     return reply.block;
   }
 
-  async parseStackerDbChunk(chunk: StackerDbChunk): Promise<ParsedStackerDbChunk[]> {
+  async parseStackerDbChunk(chunk: StackerDbChunksMessage): Promise<ParsedStackerDbChunk[]> {
     const replyWaiter = waiter<StackerDbChunkMsgReply>();
     const msg: StackerDbChunkMsgRequest = {
       type: ThreadedParserMsgType.StackerDbChunk,

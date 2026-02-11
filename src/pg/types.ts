@@ -11,6 +11,11 @@ export type DbBlock = {
   is_nakamoto_block: boolean;
 };
 
+export type DbChainTip = {
+  block_height: number;
+  index_block_hash: string;
+};
+
 export type DbBlockSignerSignature = {
   block_height: number;
   signer_key: PgBytea;

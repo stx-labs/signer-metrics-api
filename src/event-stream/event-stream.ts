@@ -1,107 +1,82 @@
-import { StacksEventStream, StacksEventStreamType } from '@hirosystems/salt-n-pepper-client';
 import { PgStore } from '../pg/pg-store';
-import {
-  CoreNodeBlockMessage,
-  CoreNodeBurnBlockMessage,
-  CoreNodeNakamotoBlockMessage,
-  StackerDbChunk,
-} from './core-node-message';
 import { logger as defaultLogger, stopwatch } from '@hirosystems/api-toolkit';
 import { ENV } from '../env';
-import {
-  ParsedNakamotoBlock,
-  ParsedStackerDbChunk,
-  parseNakamotoBlockMsg,
-  parseStackerDbChunk,
-} from './msg-parsing';
+import { ParsedNakamotoBlock, ParsedStackerDbChunk } from './msg-parsing';
 import { SignerMessagesEventPayload } from '../pg/types';
 import { ThreadedParser } from './threaded-parser';
 import { SERVER_VERSION } from '@hirosystems/api-toolkit';
 import { EventEmitter } from 'node:events';
-
-// TODO: move this into the @hirosystems/salt-n-pepper-client lib
-function sanitizeRedisClientName(value: string): string {
-  const nameSanitizer = /[^!-~]+/g;
-  return value.trim().replace(nameSanitizer, '-');
-}
+import { Message, MessagePath, StacksMessageStream } from '@stacks/node-publisher-client';
 
 export class EventStreamHandler {
   db: PgStore;
   logger = defaultLogger.child({ name: 'EventStreamHandler' });
-  eventStream: StacksEventStream;
+  eventStream: StacksMessageStream;
   threadedParser: ThreadedParser;
 
   readonly events = new EventEmitter<{
     processedMessage: [{ msgId: string }];
   }>();
 
-  constructor(opts: { db: PgStore; lastMessageId: string }) {
+  constructor(opts: { db: PgStore }) {
     this.db = opts.db;
-    const appName = sanitizeRedisClientName(
-      `signer-metrics-api ${SERVER_VERSION.tag} (${SERVER_VERSION.branch}:${SERVER_VERSION.commit})`
-    );
-    this.eventStream = new StacksEventStream({
+    const appName = `signer-metrics-api ${SERVER_VERSION.tag} (${SERVER_VERSION.branch}:${SERVER_VERSION.commit})`;
+    this.eventStream = new StacksMessageStream({
+      appName,
       redisUrl: ENV.REDIS_URL,
       redisStreamPrefix: ENV.REDIS_STREAM_KEY_PREFIX,
-      eventStreamType: StacksEventStreamType.all,
-      lastMessageId: opts.lastMessageId,
-      appName,
+      options: {
+        selectedMessagePaths: [MessagePath.NewBlock, MessagePath.StackerDbChunks],
+      },
     });
     this.threadedParser = new ThreadedParser();
   }
 
   async start() {
     await this.eventStream.connect({ waitForReady: true });
-    this.eventStream.start(async (messageId, timestamp, path, body) => {
-      return this.handleMsg(messageId, timestamp, path, body);
-    });
+    this.eventStream.start(
+      async () => {
+        const chainTip = await this.db.getChainTip(this.db.sql);
+        return {
+          blockHeight: chainTip.block_height,
+          indexBlockHash: chainTip.index_block_hash,
+        };
+      },
+      async (messageId, timestamp, message) => {
+        return this.handleMsg(messageId, timestamp, message);
+      }
+    );
   }
 
-  async handleMsg(messageId: string, timestamp: string, path: string, body: any) {
-    this.logger.info(`${path}: received Stacks stream event, msgId: ${messageId}`);
-    switch (path) {
-      case '/new_block': {
-        const blockMsg = body as CoreNodeBlockMessage;
-        const nakamotoBlockMsg = body as CoreNodeNakamotoBlockMessage;
-        if (nakamotoBlockMsg.cycle_number && nakamotoBlockMsg.reward_set) {
+  async handleMsg(messageId: string, timestamp: string, message: Message) {
+    this.logger.info(`${message.path}: received Stacks stream event, msgId: ${messageId}`);
+    switch (message.path) {
+      case MessagePath.NewBlock: {
+        const blockMsg = message.payload;
+        if (blockMsg.cycle_number && blockMsg.reward_set) {
           await this.db.ingestion.applyRewardSet(
             this.db.sql,
-            nakamotoBlockMsg.cycle_number,
-            nakamotoBlockMsg.reward_set
+            blockMsg.cycle_number,
+            blockMsg.reward_set
           );
         }
         if ('signer_signature_hash' in blockMsg) {
-          const parsed = await this.threadedParser.parseNakamotoBlock(nakamotoBlockMsg);
-          await this.handleNakamotoBlockMsg(messageId, parseInt(timestamp), parsed);
+          const parsed = await this.threadedParser.parseNakamotoBlock(blockMsg);
+          await this.handleNakamotoBlockMsg(parsed);
         } else {
           // ignore pre-Nakamoto blocks
         }
         break;
       }
 
-      case '/stackerdb_chunks': {
-        const msg = body as StackerDbChunk;
-        const parsed = await this.threadedParser.parseStackerDbChunk(msg);
-        await this.handleStackerDbMsg(messageId, parseInt(timestamp), parsed);
-        break;
-      }
-
-      case '/new_burn_block': {
-        const _msg = body as CoreNodeBurnBlockMessage;
-        // ignore
-        break;
-      }
-
-      case '/new_mempool_tx':
-      case '/drop_mempool_tx':
-      case '/attachments/new':
-      case '/new_microblocks': {
-        // ignore
+      case MessagePath.StackerDbChunks: {
+        const parsed = await this.threadedParser.parseStackerDbChunk(message.payload);
+        await this.handleStackerDbMsg(parseInt(timestamp), parsed);
         break;
       }
 
       default:
-        this.logger.warn(`Unhandled stacks stream event: ${path}`);
+        this.logger.warn(`Unhandled stacks stream event: ${message.path}`);
         break;
     }
     this.events.emit('processedMessage', { msgId: messageId });
@@ -113,7 +88,6 @@ export class EventStreamHandler {
   }
 
   async handleStackerDbMsg(
-    messageId: string,
     timestamp: number,
     stackerDbChunks: ParsedStackerDbChunk[]
   ): Promise<void> {
@@ -124,7 +98,6 @@ export class EventStreamHandler {
         const result = await this.db.ingestion.applyStackerDbChunk(sql, timestamp, chunk);
         appliedSignerMessageResults.push(...result);
       }
-      await this.db.ingestion.updateLastIngestedRedisMsgId(sql, messageId);
     });
     this.logger.info(`Apply StackerDB chunks finished in ${time.getElapsedSeconds()}s`);
 
@@ -137,23 +110,20 @@ export class EventStreamHandler {
     }
   }
 
-  async handleNakamotoBlockMsg(
-    messageId: string,
-    _timestamp: number,
-    block: ParsedNakamotoBlock
-  ): Promise<void> {
-    // TODO: wrap in sql transaction
+  async handleNakamotoBlockMsg(block: ParsedNakamotoBlock): Promise<void> {
     const time = stopwatch();
     await this.db.sqlWriteTransaction(async sql => {
-      const lastIngestedBlockHeight = await this.db.getLastIngestedBlockHeight(sql);
+      const { block_height: lastIngestedBlockHeight } = await this.db.getChainTip(sql);
       if (block.blockHeight <= lastIngestedBlockHeight) {
         this.logger.info(`Skipping previously ingested block ${block.blockHeight}`);
         return;
       }
       this.logger.info(`Apply block ${block.blockHeight}`);
       await this.db.ingestion.applyBlock(sql, block);
-      await this.db.ingestion.updateChainTipBlockHeight(sql, block.blockHeight);
-      await this.db.ingestion.updateLastIngestedRedisMsgId(sql, messageId);
+      await this.db.ingestion.updateChainTip(sql, {
+        blockHeight: block.blockHeight,
+        indexBlockHash: block.indexBlockHash,
+      });
     });
     this.logger.info(`Apply block ${block.blockHeight} finished in ${time.getElapsedSeconds()}s`);
   }
