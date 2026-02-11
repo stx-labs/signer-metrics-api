@@ -1,11 +1,11 @@
 import * as WorkerThreads from 'node:worker_threads';
-import { CoreNodeNakamotoBlockMessage, StackerDbChunk } from './core-node-message';
 import {
   ParsedNakamotoBlock,
   ParsedStackerDbChunk,
   parseNakamotoBlockMsg,
   parseStackerDbChunk,
 } from './msg-parsing';
+import { NewBlockMessage, StackerDbChunksMessage } from '@stacks/node-publisher-client';
 
 export const workerFile = __filename;
 
@@ -22,7 +22,7 @@ interface ThreadMsg {
 export interface NakamotoBlockMsgRequest extends ThreadMsg {
   type: ThreadedParserMsgType.NakamotoBlock;
   msgId: number;
-  block: CoreNodeNakamotoBlockMessage;
+  block: NewBlockMessage;
 }
 
 export interface NakamotoBlockMsgReply extends ThreadMsg {
@@ -34,7 +34,7 @@ export interface NakamotoBlockMsgReply extends ThreadMsg {
 export interface StackerDbChunkMsgRequest extends ThreadMsg {
   type: ThreadedParserMsgType.StackerDbChunk;
   msgId: number;
-  chunk: StackerDbChunk;
+  chunk: StackerDbChunksMessage;
 }
 
 export interface StackerDbChunkMsgReply extends ThreadMsg {

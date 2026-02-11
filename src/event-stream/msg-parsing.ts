@@ -1,9 +1,13 @@
 import * as crypto from 'node:crypto';
 import * as secp from '../vendored/@noble/secp256k1';
-import { CoreNodeNakamotoBlockMessage, ModifiedSlot, StackerDbChunk } from './core-node-message';
 import { BufferCursor } from './buffer-cursor';
 import { BufferWriter } from './buffer-writer';
 import { BytesReader, deserializeTransaction } from '@stacks/transactions';
+import {
+  NewBlockMessage,
+  StackerDbChunksMessage,
+  StackerDbChunksModifiedSlot,
+} from '@stacks/node-publisher-client';
 
 export interface ParsedNakamotoBlock {
   blockHeight: number;
@@ -33,7 +37,7 @@ export interface ParsedRewardSet {
   };
 }
 
-export function parseNakamotoBlockMsg(block: CoreNodeNakamotoBlockMessage): ParsedNakamotoBlock {
+export function parseNakamotoBlockMsg(block: NewBlockMessage): ParsedNakamotoBlock {
   const signerPubkeys = recoverBlockSignerPubkeys(block);
   const blockData: ParsedNakamotoBlock = {
     blockHeight: block.block_height,
@@ -42,8 +46,8 @@ export function parseNakamotoBlockMsg(block: CoreNodeNakamotoBlockMessage): Pars
     burnBlockHash: block.burn_block_hash,
     indexBlockHash: block.index_block_hash,
     tenureHeight: block.tenure_height ?? null,
-    blockTime: block.block_time,
-    signerSignatures: block.signer_signature,
+    blockTime: block.block_time ?? 0,
+    signerSignatures: block.signer_signature ?? [],
     signerBitvec: block.signer_bitvec ?? null,
     rewardSet: block.reward_set ?? null,
     cycleNumber: block.cycle_number ?? null,
@@ -117,7 +121,7 @@ export type ParsedStackerDbChunk =
   | StateMachineUpdate
   | BlockPreCommitChunkType;
 
-export function parseStackerDbChunk(chunk: StackerDbChunk): ParsedStackerDbChunk[] {
+export function parseStackerDbChunk(chunk: StackerDbChunksMessage): ParsedStackerDbChunk[] {
   return chunk.modified_slots.flatMap(msg => {
     return {
       contract: chunk.contract_id.name,
@@ -128,18 +132,22 @@ export function parseStackerDbChunk(chunk: StackerDbChunk): ParsedStackerDbChunk
   });
 }
 
-function recoverBlockSignerPubkeys(block: CoreNodeNakamotoBlockMessage): string[] {
+function recoverBlockSignerPubkeys(block: NewBlockMessage): string[] {
   const sigHash = Buffer.from(block.signer_signature_hash.replace(/^0x/, ''), 'hex');
 
-  return block.signer_signature.map(signerSig => {
-    const signerSigBuff = Buffer.from(signerSig.replace(/^0x/, ''), 'hex');
-    const recid = signerSigBuff[0]; // recovery ID (first byte of the signature)
-    const sig = signerSigBuff.subarray(1); // actual signature (remaining 64 bytes)
+  return (
+    block.signer_signature?.map(signerSig => {
+      const signerSigBuff = Buffer.from(signerSig.replace(/^0x/, ''), 'hex');
+      const recid = signerSigBuff[0]; // recovery ID (first byte of the signature)
+      const sig = signerSigBuff.subarray(1); // actual signature (remaining 64 bytes)
 
-    const pubkey = secp.Signature.fromCompact(sig).addRecoveryBit(recid).recoverPublicKey(sigHash);
+      const pubkey = secp.Signature.fromCompact(sig)
+        .addRecoveryBit(recid)
+        .recoverPublicKey(sigHash);
 
-    return pubkey.toHex();
-  });
+      return pubkey.toHex();
+    }) ?? []
+  );
 }
 
 enum SignerMessageTypePrefix {
@@ -210,7 +218,7 @@ function toU32BeBytes(num: number): Buffer {
 }
 
 /** Get the digest to sign that authenticates this chunk data and metadata */
-function authDigest(slot: ModifiedSlot): Buffer {
+function authDigest(slot: StackerDbChunksModifiedSlot): Buffer {
   const hasher = crypto.createHash('sha512-256');
   hasher.update(toU32BeBytes(slot.slot_id));
   hasher.update(toU32BeBytes(slot.slot_version));
@@ -222,7 +230,7 @@ function authDigest(slot: ModifiedSlot): Buffer {
   return hasher.digest();
 }
 
-function recoverChunkSlotPubkey(slot: ModifiedSlot) {
+function recoverChunkSlotPubkey(slot: StackerDbChunksModifiedSlot) {
   const digest = authDigest(slot);
   const sigBuff = Buffer.from(slot.sig, 'hex');
 
