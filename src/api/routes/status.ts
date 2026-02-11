@@ -24,13 +24,14 @@ export const StatusRoutes: FastifyPluginCallback<
     },
     async (_req, reply) => {
       const result = await fastify.db.sqlTransaction(async _sql => {
-        const block_height = await fastify.db.getChainTipBlockHeight();
+        const chainTip = await fastify.db.getChainTip(fastify.db.sql);
 
         return {
           server_version: `signer-metrics-api ${SERVER_VERSION.tag} (${SERVER_VERSION.branch}:${SERVER_VERSION.commit})`,
           status: 'ready',
           chain_tip: {
-            block_height,
+            block_height: chainTip.block_height,
+            index_block_hash: chainTip.index_block_hash,
           },
         };
       });

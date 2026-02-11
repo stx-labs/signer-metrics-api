@@ -98,9 +98,9 @@ export function configureSignerMetrics(db: PgStore) {
     name: metricsPrefix + 'stacks_block_height',
     help: 'Last indexed stacks block height',
     async collect() {
-      const blockHeight = await db.getChainTipBlockHeight();
+      const chainTip = await db.getChainTip(db.sql);
       this.reset();
-      this.set(blockHeight);
+      this.set(chainTip.block_height);
     },
   });
 }
